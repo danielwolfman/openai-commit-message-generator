@@ -1,3 +1,4 @@
+import argparse
 import os
 import subprocess
 import requests
@@ -8,13 +9,13 @@ from urllib.parse import urlencode, parse_qs, urlparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Azure AD and Azure OpenAI configuration
-TENANT_ID = 'common'  # Replace with your tenant ID if applicable
-CLIENT_ID = 'YOUR_CLIENT_ID'  # Replace with your Azure AD Application ID
-RESOURCE = 'https://cognitiveservices.azure.com/'  # Azure OpenAI resource URL
+TENANT_ID = 'some_tenant_id'  # Replace with your Azure AD Tenant ID
+CLIENT_ID = 'some_client_id'  # Replace with your Azure AD Application (Client) ID
+RESOURCE = 'https://some_resource'  # Replace with your Azure AD Application ID URI
 AUTHORITY_URL = f'https://login.microsoftonline.com/{TENANT_ID}'
 AUTH_ENDPOINT = '/oauth2/v2.0/authorize'
 TOKEN_ENDPOINT = '/oauth2/v2.0/token'
-SCOPES = ['https://cognitiveservices.azure.com/.default']
+SCOPES = ['api://the_api_id/.default']
 REDIRECT_URI = 'http://localhost:5000/getToken'
 TOKEN_PATH = os.path.expanduser('~/.azure_openai_token.json')
 
@@ -24,6 +25,21 @@ AZURE_OPENAI_API_VERSION = '2024-06-01'
 DEPLOYMENT_NAME = 'gpt-4-turbo'
 MAX_TOKENS_PER_MINUTE = 10000  # 10,000 tokens per minute limit for GPT-4 Turbo
 
+DEFAULT_STYLE_GUIDE = """
+# Commit Style Guide
+
+1. Start the commit message with a short summary of the changes.
+2. Use the imperative mood in the summary (e.g., "Add feature" instead of "Added feature").
+3. Separate the summary from the body with a blank line.
+4. Use the body to provide more detailed information about the changes.
+5. Wrap the body at 72 characters per line.
+6. Use bullet points for each change or feature added.
+7. Use present tense in the body (e.g., "Fix bug" instead of "Fixed bug").
+8. Reference any relevant issues or tickets in the body.
+9. Use the style guide consistently across commits.
+10. Proofread the commit message before pushing to the repository.
+
+"""
 class OAuthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_path = urlparse(self.path)
@@ -98,8 +114,11 @@ def save_token(token_data):
         json.dump(token_data, f)
 
 def read_style_guide():
-    with open('COMMIT_STYLE.md', 'r') as f:
-        return f.read()
+    try:
+        with open('COMMIT_STYLE.md', 'r') as f:
+            return f.read()
+    except FileNotFoundError:
+        return DEFAULT_STYLE_GUIDE
 
 def get_changed_files(staged_only):
     cmd = ["git", "status", "--porcelain"]
@@ -133,20 +152,35 @@ def get_file_diffs(files, staged_only):
 
 def chunk_diffs(diffs, max_tokens=3000):
     chunks = []
-    current_chunk = ''
-    current_tokens = 0
-    for file_diff in diffs.values():
-        diff_tokens = len(file_diff.split())
-        if current_tokens + diff_tokens > max_tokens:
-            chunks.append(current_chunk)
-            current_chunk = file_diff
-            current_tokens = diff_tokens
+    token_multiplier = 1.5  # Approximation: Each word may roughly correspond to 1.5 tokens
+
+    for _, file_diff in diffs.items():
+        diff_tokens = int(len(file_diff.split()) * token_multiplier)
+        
+        # If a single file_diff exceeds the max token limit, split it into smaller parts
+        if diff_tokens > max_tokens:
+            words = file_diff.split()
+            current_chunk = ""
+            current_tokens = 0
+
+            for word in words:
+                word_tokens = int(len(word) * token_multiplier)
+
+                if current_tokens + word_tokens > max_tokens:
+                    chunks.append(current_chunk.strip())  # Finalize current chunk
+                    current_chunk = word  # Start new chunk
+                    current_tokens = word_tokens
+                else:
+                    current_chunk += ' ' + word
+                    current_tokens += word_tokens
+
+            if current_chunk:
+                chunks.append(current_chunk.strip())  # Add the last remaining chunk
         else:
-            current_chunk += '\n' + file_diff
-            current_tokens += diff_tokens
-    if current_chunk:
-        chunks.append(current_chunk)
+            chunks.append(file_diff)  # If within limits, add the entire diff
+
     return chunks
+
 
 def generate_text_with_azure_openai(prompt):
     access_token = get_access_token()
