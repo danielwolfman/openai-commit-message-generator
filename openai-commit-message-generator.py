@@ -1,13 +1,9 @@
 import os
-import subprocess
-import json
 import sys
 from dotenv import load_dotenv
-from openai import AzureOpenAI
+from openai import AzureOpenAI, AuthenticationError
 
 # Azure AD and Azure OpenAI configuration
-TENANT_ID = 'some_tenant_id'  # Replace with your Azure AD Tenant ID
-RESOURCE = 'https://some_resource'  # Replace with your Azure AD Application ID URI
 AZURE_OPENAI_API_VERSION = '2024-06-01'
 SYSTEM_PROMPT = "You are a git diff summarizer. You get the git diff of a code change and generate a commit message that follows the commit style guide. you only send the summary, and nothing else."
 ASSISTANT_PROMPT = "Based on the following code changes, generate a commit message that follows the commit style guide:\n\n"
@@ -15,9 +11,9 @@ ASSISTANT_PROMPT = "Based on the following code changes, generate a commit messa
 # Load environment variables from .env file
 load_dotenv()
 
-# Retrieve the client secret from environment variables
-CLIENT_SECRET = os.getenv('CLIENT_SECRET')
+# Retrieve the Azure OpenAI API key from the environment variables
 API_KEY = os.getenv('API_KEY')
+RESOURCE = os.getenv('RESOURCE')
 
 client = AzureOpenAI(
     api_version=AZURE_OPENAI_API_VERSION,
@@ -99,14 +95,22 @@ def chunk_diffs(diffs, max_tokens=3000):
     return chunks
 
 def generate_text_with_azure_openai(prompt):
-    response = client.chat.completions.create(
-        model=DEPLOYMENT_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "assistant", "content": get_assistant_prompt()},
-            {"role": "user", "content": prompt}
-        ]
-    )
+    try:
+        response = client.chat.completions.create(
+            model=DEPLOYMENT_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "assistant", "content": get_assistant_prompt()},
+                {"role": "user", "content": prompt}
+            ]
+        )
+    except AuthenticationError:
+        print("Authentication error. Please check your Azure OpenAI API key.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"An error occurred: {e}", file=sys.stderr)
+        sys.exit(1)
+
     return response.choices[0].message.content
 
 def summarize_chunk(chunk):
