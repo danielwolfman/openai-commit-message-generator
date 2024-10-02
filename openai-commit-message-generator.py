@@ -1,154 +1,71 @@
-import argparse
 import os
 import subprocess
-import requests
-import webbrowser
-import time
 import json
-from urllib.parse import urlencode, parse_qs, urlparse
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import sys
+from dotenv import load_dotenv
+from openai import AzureOpenAI
 
 # Azure AD and Azure OpenAI configuration
 TENANT_ID = 'some_tenant_id'  # Replace with your Azure AD Tenant ID
-CLIENT_ID = 'some_client_id'  # Replace with your Azure AD Application (Client) ID
 RESOURCE = 'https://some_resource'  # Replace with your Azure AD Application ID URI
-AUTHORITY_URL = f'https://login.microsoftonline.com/{TENANT_ID}'
-AUTH_ENDPOINT = '/oauth2/v2.0/authorize'
-TOKEN_ENDPOINT = '/oauth2/v2.0/token'
-SCOPES = ['api://the_api_id/.default']
-REDIRECT_URI = 'http://localhost:5000/getToken'
-TOKEN_PATH = os.path.expanduser('~/.azure_openai_token.json')
+AZURE_OPENAI_API_VERSION = '2024-06-01'
+SYSTEM_PROMPT = "You are a git diff summarizer. You get the git diff of a code change and generate a commit message that follows the commit style guide. you only send the summary, and nothing else."
+ASSISTANT_PROMPT = "Based on the following code changes, generate a commit message that follows the commit style guide:\n\n"
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Retrieve the client secret from environment variables
+CLIENT_SECRET = os.getenv('CLIENT_SECRET')
+API_KEY = os.getenv('API_KEY')
+
+client = AzureOpenAI(
+    api_version=AZURE_OPENAI_API_VERSION,
+    azure_endpoint=RESOURCE,
+    api_key=API_KEY
+)
 
 # Azure OpenAI specific configuration
 AZURE_OPENAI_ENDPOINT = 'https://some-azure-openai-endpoint.com'
 AZURE_OPENAI_API_VERSION = '2024-06-01'
 DEPLOYMENT_NAME = 'gpt-4-turbo'
-MAX_TOKENS_PER_MINUTE = 10000  # 10,000 tokens per minute limit for GPT-4 Turbo
 
 DEFAULT_STYLE_GUIDE = """
 # Commit Style Guide
 
-1. Start the commit message with a short summary of the changes.
-2. Use the imperative mood in the summary (e.g., "Add feature" instead of "Added feature").
-3. Separate the summary from the body with a blank line.
-4. Use the body to provide more detailed information about the changes.
-5. Wrap the body at 72 characters per line.
-6. Use bullet points for each change or feature added.
-7. Use present tense in the body (e.g., "Fix bug" instead of "Fixed bug").
-8. Reference any relevant issues or tickets in the body.
-9. Use the style guide consistently across commits.
-10. Proofread the commit message before pushing to the repository.
+1. Start the commit message with the change kind (available kinds are: fix, feat, chore, ci, build, docs, style, refactor, perf, test, revert, note )
+2. After the kind, write the a short summary of the changes (for example, "fix: a bugfix in component X regarding logging errors")
+3. Use the imperative mood in the summary (e.g., "Add feature" instead of "Added feature").
+4. Separate the summary from the body with a blank line.
+5. Use the body to provide more detailed information about the changes.
+6. Wrap the body at 72 characters per line.
+7. Use bullet points for each change or feature added.
+8. Use present tense in the body (e.g., "Fix bug" instead of "Fixed bug").
+9. Reference any relevant issues or tickets in the body.
+10. Use the style guide consistently across commits.
+11. Proofread the commit message before pushing to the repository.
 
 """
-class OAuthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed_path = urlparse(self.path)
-        if parsed_path.path == '/getToken':
-            query_components = parse_qs(parsed_path.query)
-            if 'code' in query_components:
-                self.server.auth_code = query_components['code'][0]
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b'Authentication successful. You can close this window.')
-            else:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(b'Authentication failed.')
-        else:
-            self.send_response(404)
-            self.end_headers()
 
-def get_access_token():
-    # Check if token exists and is valid
-    if os.path.exists(TOKEN_PATH):
-        with open(TOKEN_PATH, 'r') as f:
-            token_data = json.load(f)
-        expires_at = token_data.get('expires_at', 0)
-        if expires_at > time.time():
-            return token_data['access_token']
-
-    # Start local server to receive the auth code
-    server_address = ('', 5000)
-    httpd = HTTPServer(server_address, OAuthHandler)
-
-    # Build the authorization URL
-    params = {
-        'client_id': CLIENT_ID,
-        'response_type': 'code',
-        'redirect_uri': REDIRECT_URI,
-        'response_mode': 'query',
-        'scope': ' '.join(SCOPES)
-    }
-    auth_url = AUTHORITY_URL + AUTH_ENDPOINT + '?' + urlencode(params)
-
-    # Open the browser for user login
-    print('Opening browser for Azure login...')
-    webbrowser.open(auth_url)
-
-    # Wait for the auth code
-    httpd.handle_request()
-    auth_code = httpd.auth_code
-
-    # Exchange auth code for access token
-    token_data = get_token_from_code(auth_code)
-    save_token(token_data)
-    return token_data['access_token']
-
-def get_token_from_code(auth_code):
-    post_data = {
-        'client_id': CLIENT_ID,
-        'grant_type': 'authorization_code',
-        'code': auth_code,
-        'redirect_uri': REDIRECT_URI,
-        'scope': ' '.join(SCOPES)
-    }
-    token_url = AUTHORITY_URL + TOKEN_ENDPOINT
-    response = requests.post(token_url, data=post_data)
-    response.raise_for_status()
-    token_data = response.json()
-    token_data['expires_at'] = time.time() + int(token_data['expires_in'])
-    return token_data
-
-def save_token(token_data):
-    with open(TOKEN_PATH, 'w') as f:
-        json.dump(token_data, f)
+STYLE_GUIDE_FALLBACK_LOCATION = '~/.git_commit_style.md'
 
 def read_style_guide():
     try:
         with open('COMMIT_STYLE.md', 'r') as f:
-            return f.read()
+            commit_style_content = f.read()
+            # Save the style guide to a fallback location
+            with open(STYLE_GUIDE_FALLBACK_LOCATION, 'w') as fallback:
+                fallback.write(commit_style_content)
+            return commit_style_content
     except FileNotFoundError:
-        return DEFAULT_STYLE_GUIDE
+        try:
+            with open(STYLE_GUIDE_FALLBACK_LOCATION, 'r') as f:
+                return f.read()
+        except FileNotFoundError:
+            return DEFAULT_STYLE_GUIDE
 
-def get_changed_files(staged_only):
-    cmd = ["git", "status", "--porcelain"]
-    if staged_only:
-        cmd.append("--untracked-files=no")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    lines = result.stdout.strip().split('\n')
-    files = {'added': [], 'modified': [], 'deleted': []}
-    for line in lines:
-        if not line:
-            continue
-        status, file = line[:2], line[3:]
-        if 'A' in status:
-            files['added'].append(file)
-        elif 'M' in status:
-            files['modified'].append(file)
-        elif 'D' in status:
-            files['deleted'].append(file)
-    return files
-
-def get_file_diffs(files, staged_only):
-    diffs = {}
-    diff_cmd = ["git", "diff"]
-    if staged_only:
-        diff_cmd.append("--staged")
-    for file in files['modified']:
-        cmd = diff_cmd + [file]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        diffs[file] = result.stdout
-    return diffs
+def get_assistant_prompt():
+    return ASSISTANT_PROMPT + read_style_guide()
 
 def chunk_diffs(diffs, max_tokens=3000):
     chunks = []
@@ -181,52 +98,33 @@ def chunk_diffs(diffs, max_tokens=3000):
 
     return chunks
 
-
 def generate_text_with_azure_openai(prompt):
-    access_token = get_access_token()
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json'
-    }
-    data = {
-        'prompt': prompt,
-        'max_tokens': 150,
-        'temperature': 0.7,
-        'n': 1,
-    }
-    response = requests.post(
-        f"{AZURE_OPENAI_ENDPOINT}/openai/deployments/{DEPLOYMENT_NAME}/completions?api-version={AZURE_OPENAI_API_VERSION}",
-        headers=headers,
-        json=data
+    response = client.chat.completions.create(
+        model=DEPLOYMENT_NAME,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "assistant", "content": get_assistant_prompt()},
+            {"role": "user", "content": prompt}
+        ]
     )
-    response.raise_for_status()
-    return response.json()['choices'][0]['text']
+    return response.choices[0].message.content
 
 def summarize_chunk(chunk):
-    prompt = f"Summarize the following code changes:\n\n{chunk}"
-    return generate_text_with_azure_openai(prompt)
+    return generate_text_with_azure_openai(chunk)
 
 def combine_summaries(summaries):
     return '\n'.join(f"- {summary.strip()}" for summary in summaries)
 
-def generate_final_commit_message(style_guide, combined_summaries):
-    prompt = f"{style_guide}\n\nBased on the summaries below, generate a commit message that follows the style guide:\n{combined_summaries}"
+def generate_final_commit_message(combined_summaries):
+    prompt = f"Based on the summaries below, generate a commit message that follows the style guide:\n{combined_summaries}"
     return generate_text_with_azure_openai(prompt)
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Generate a commit message using Azure OpenAI.')
-    parser.add_argument('--staged', action='store_true', help='Summarize only staged files.')
-    return parser.parse_args()
-
 def main():
-    args = parse_args()
-    style_guide = read_style_guide()
-    files = get_changed_files(staged_only=args.staged)
-    diffs = get_file_diffs(files, staged_only=args.staged)
-    
-    # Combine diffs into one text
-    all_diffs = '\n'.join(diffs.values())
-    
+    all_diffs = sys.stdin.read()
+    if not all_diffs.startswith('diff --git'):
+        print("Not a valid git diff input. Please provide the git diff as input.", file=sys.stderr)
+        sys.exit(1)
+
     # Chunk the diffs
     diff_chunks = chunk_diffs({'combined_diff': all_diffs})
     
@@ -236,13 +134,15 @@ def main():
         summary = summarize_chunk(chunk)
         summaries.append(summary)
     
-    # Combine summaries
-    combined_summaries = combine_summaries(summaries)
+    if len(summaries) > 1:
+        # Combine summaries
+        combined_summaries = combine_summaries(summaries)
+        
+        # Generate the final commit message
+        commit_message = generate_final_commit_message(combined_summaries)
+    else:
+        commit_message = summaries[0]
     
-    # Generate the final commit message
-    commit_message = generate_final_commit_message(style_guide, combined_summaries)
-    
-    print("Generated Commit Message:\n")
     print(commit_message.strip())
 
 if __name__ == '__main__':
