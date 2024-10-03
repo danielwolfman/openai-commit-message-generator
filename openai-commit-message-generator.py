@@ -5,6 +5,7 @@ from openai import AzureOpenAI, AuthenticationError
 
 # Azure AD and Azure OpenAI configuration
 AZURE_OPENAI_API_VERSION = '2024-06-01'
+DEPLOYMENT_NAME = 'gpt-4-turbo'
 SYSTEM_PROMPT = "You are a git diff summarizer. You get the git diff of a code change and generate a commit message that follows the commit style guide. you only send the summary, and nothing else."
 ASSISTANT_PROMPT = "Based on the following code changes, generate a commit message that follows the commit style guide:\n\n"
 
@@ -13,18 +14,13 @@ load_dotenv()
 
 # Retrieve the Azure OpenAI API key from the environment variables
 API_KEY = os.getenv('API_KEY')
-RESOURCE = os.getenv('RESOURCE')
+AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT')
 
 client = AzureOpenAI(
     api_version=AZURE_OPENAI_API_VERSION,
-    azure_endpoint=RESOURCE,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
     api_key=API_KEY
 )
-
-# Azure OpenAI specific configuration
-AZURE_OPENAI_ENDPOINT = 'https://some-azure-openai-endpoint.com'
-AZURE_OPENAI_API_VERSION = '2024-06-01'
-DEPLOYMENT_NAME = 'gpt-4-turbo'
 
 DEFAULT_STYLE_GUIDE = """
 # Commit Style Guide

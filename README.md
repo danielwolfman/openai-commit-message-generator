@@ -28,7 +28,7 @@ pip install python-dotenv openai
 
    ```
    API_KEY=<Your_Azure_OpenAI_API_Key>
-   RESOURCE=<Your_Azure_OpenAI_Resource_Endpoint>
+   AZURE_OPENAI_ENDPOINT=<Your_Azure_OpenAI_Endpoint>
    ```
 
 2. **COMMIT_STYLE.md** (Optional): Create a file named `COMMIT_STYLE.md` to define your custom commit message style guide. If not provided, a default guide will be used.
