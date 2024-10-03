@@ -37,13 +37,11 @@ DEFAULT_STYLE_GUIDE = """
 6. Wrap the body at 72 characters per line.
 7. Use bullet points for each change or feature added.
 8. Use present tense in the body (e.g., "Fix bug" instead of "Fixed bug").
-9. Reference any relevant issues or tickets in the body.
-10. Use the style guide consistently across commits.
-11. Proofread the commit message before pushing to the repository.
+9. Refer to any filenames/filepaths in the bullet points, for more context.
 
 """
 
-STYLE_GUIDE_FALLBACK_LOCATION = '~/.git_commit_style.md'
+STYLE_GUIDE_FALLBACK_LOCATION = os.path.expanduser('~/commit_style_guide.md')
 
 def read_style_guide():
     try:

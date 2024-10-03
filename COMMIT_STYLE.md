@@ -8,6 +8,4 @@
 6. Wrap the body at 72 characters per line.
 7. Use bullet points for each change or feature added.
 8. Use present tense in the body (e.g., "Fix bug" instead of "Fixed bug").
-9. Reference any relevant issues or tickets in the body.
-10. Use the style guide consistently across commits.
-11. Proofread the commit message before pushing to the repository.
+9. Refer to any filenames/filepaths in the bullet points, for more context.
