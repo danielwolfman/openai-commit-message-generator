@@ -9,19 +9,6 @@ DEPLOYMENT_NAME = 'gpt-4-turbo'
 SYSTEM_PROMPT = "You are a git diff summarizer. You get the git diff of a code change and generate a commit message that follows the commit style guide. you only send the summary, and nothing else."
 ASSISTANT_PROMPT = "Based on the following code changes, generate a commit message that follows the commit style guide:\n\n"
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Retrieve the Azure OpenAI API key from the environment variables
-API_KEY = os.getenv('API_KEY')
-AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT')
-
-client = AzureOpenAI(
-    api_version=AZURE_OPENAI_API_VERSION,
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    api_key=API_KEY
-)
-
 DEFAULT_STYLE_GUIDE = """
 # Commit Style Guide
 
@@ -37,22 +24,50 @@ DEFAULT_STYLE_GUIDE = """
 
 """
 
-STYLE_GUIDE_FALLBACK_LOCATION = os.path.expanduser('~/commit_style_guide.md')
-
 def read_style_guide():
+    style_guide_fallback_location = os.path.expanduser('~/.commit_style_guide.md')
     try:
         with open('COMMIT_STYLE.md', 'r') as f:
             commit_style_content = f.read()
             # Save the style guide to a fallback location
-            with open(STYLE_GUIDE_FALLBACK_LOCATION, 'w') as fallback:
+            with open(style_guide_fallback_location, 'w') as fallback:
                 fallback.write(commit_style_content)
             return commit_style_content
     except FileNotFoundError:
         try:
-            with open(STYLE_GUIDE_FALLBACK_LOCATION, 'r') as f:
+            with open(style_guide_fallback_location, 'r') as f:
                 return f.read()
         except FileNotFoundError:
             return DEFAULT_STYLE_GUIDE
+        
+def get_azure_openai_cache():
+    load_dotenv()
+    api_key = os.getenv('API_KEY')
+    azure_openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+    azure_openai_cache_location = os.path.expanduser('~/.azure_openai_cache')
+    if api_key and azure_openai_endpoint:
+        # If cache doesn't exist, create it
+        if not os.path.exists(azure_openai_cache_location):
+            with open(azure_openai_cache_location, 'w') as f:
+                f.write(f'API_KEY={api_key}\n')
+                f.write(f'AZURE_OPENAI_ENDPOINT={azure_openai_endpoint}\n')
+        return api_key, azure_openai_endpoint
+    try:
+        with open(azure_openai_cache_location, 'r') as f:
+            api_key_line, azure_openai_endpoint_line = f.read().splitlines()
+            api_key = api_key_line.split('=')[1]
+            azure_openai_endpoint = azure_openai_endpoint_line.split('=')[1]
+            return api_key, azure_openai_endpoint
+    except FileNotFoundError:
+        print("Azure OpenAI API key and endpoint not found. Please provide them in the environment variables or in the cache file.", file=sys.stderr)
+        sys.exit(1)
+
+api_key, azure_openai_endpoint = get_azure_openai_cache()
+client = AzureOpenAI(
+    api_version=AZURE_OPENAI_API_VERSION,
+    azure_endpoint=azure_openai_endpoint,
+    api_key=api_key
+)
 
 def get_assistant_prompt():
     return ASSISTANT_PROMPT + read_style_guide()
