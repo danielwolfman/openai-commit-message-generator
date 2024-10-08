@@ -2,10 +2,9 @@ import os
 import sys
 from dotenv import load_dotenv
 from openai import AzureOpenAI, AuthenticationError
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-# Azure AD and Azure OpenAI configuration
-AZURE_OPENAI_API_VERSION = '2024-06-01'
-DEPLOYMENT_NAME = 'gpt-4-turbo'
+# OpenAI configuration
 SYSTEM_PROMPT = "You are a git diff summarizer. You get the git diff of a code change and generate a commit message that follows the commit style guide. you only send the summary, and nothing else."
 ASSISTANT_PROMPT = "Based on the following code changes, generate a commit message that follows the commit style guide:\n\n"
 
@@ -42,37 +41,51 @@ def read_style_guide():
         
 def get_azure_openai_cache():
     load_dotenv()
-    api_key = os.getenv('API_KEY')
     azure_openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+    azure_openai_api_version = os.getenv('AZURE_OPENAI_API_VERSION')
+    openai_model = os.getenv('OPENAI_MODEL')
+    openai_model_max_tokens = int(os.getenv('OPENAI_MODEL_MAX_TOKENS', 8192))
     azure_openai_cache_location = os.path.expanduser('~/.azure_openai_cache')
-    if api_key and azure_openai_endpoint:
+    if azure_openai_endpoint:
         # If cache doesn't exist, create it
         if not os.path.exists(azure_openai_cache_location):
             with open(azure_openai_cache_location, 'w') as f:
-                f.write(f'API_KEY={api_key}\n')
                 f.write(f'AZURE_OPENAI_ENDPOINT={azure_openai_endpoint}\n')
-        return api_key, azure_openai_endpoint
+                f.write(f'AZURE_OPENAI_API_VERSION={azure_openai_api_version}\n')
+                f.write(f'OPENAI_MODEL={openai_model}\n')
+                f.write(f'OPENAI_MODEL_MAX_TOKENS={openai_model_max_tokens}\n')
+        return azure_openai_endpoint, azure_openai_api_version, openai_model, openai_model_max_tokens
     try:
         with open(azure_openai_cache_location, 'r') as f:
-            api_key_line, azure_openai_endpoint_line = f.read().splitlines()
-            api_key = api_key_line.split('=')[1]
-            azure_openai_endpoint = azure_openai_endpoint_line.split('=')[1]
-            return api_key, azure_openai_endpoint
+            for line in f:
+                if line.startswith('AZURE_OPENAI_ENDPOINT'):
+                    azure_openai_endpoint = line.split('=')[1].strip()
+                elif line.startswith('AZURE_OPENAI_API_VERSION'):
+                    azure_openai_api_version = line.split('=')[1].strip()
+                elif line.startswith('OPENAI_MODEL'):
+                    openai_model = line.split('=')[1].strip()
+                elif line.startswith('OPENAI_MODEL_MAX_TOKENS'):
+                    openai_model_max_tokens = line.split('=')[1].strip()
+        return azure_openai_endpoint, azure_openai_api_version, openai_model, openai_model_max_tokens
     except FileNotFoundError:
-        print("Azure OpenAI API key and endpoint not found. Please provide them in the environment variables or in the cache file.", file=sys.stderr)
+        print("Azure OpenAI endpoint not found. Please provide them in the environment variables or in the cache file.", file=sys.stderr)
         sys.exit(1)
 
-api_key, azure_openai_endpoint = get_azure_openai_cache()
+azure_openai_endpoint, api_version, openai_model, openai_model_max_tokens = get_azure_openai_cache()
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+)
+
 client = AzureOpenAI(
-    api_version=AZURE_OPENAI_API_VERSION,
+    api_version=api_version,
     azure_endpoint=azure_openai_endpoint,
-    api_key=api_key
+    azure_ad_token_provider=token_provider
 )
 
 def get_assistant_prompt():
     return ASSISTANT_PROMPT + read_style_guide()
 
-def chunk_diffs(diffs, max_tokens=3000):
+def chunk_diffs(diffs):
     chunks = []
     token_multiplier = 1.5  # Approximation: Each word may roughly correspond to 1.5 tokens
 
@@ -80,7 +93,7 @@ def chunk_diffs(diffs, max_tokens=3000):
         diff_tokens = int(len(file_diff.split()) * token_multiplier)
         
         # If a single file_diff exceeds the max token limit, split it into smaller parts
-        if diff_tokens > max_tokens:
+        if diff_tokens > openai_model_max_tokens:
             words = file_diff.split()
             current_chunk = ""
             current_tokens = 0
@@ -88,7 +101,7 @@ def chunk_diffs(diffs, max_tokens=3000):
             for word in words:
                 word_tokens = int(len(word) * token_multiplier)
 
-                if current_tokens + word_tokens > max_tokens:
+                if current_tokens + word_tokens > openai_model_max_tokens:
                     chunks.append(current_chunk.strip())  # Finalize current chunk
                     current_chunk = word  # Start new chunk
                     current_tokens = word_tokens
@@ -106,7 +119,7 @@ def chunk_diffs(diffs, max_tokens=3000):
 def generate_text_with_azure_openai(prompt):
     try:
         response = client.chat.completions.create(
-            model=DEPLOYMENT_NAME,
+            model=openai_model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "assistant", "content": get_assistant_prompt()},
