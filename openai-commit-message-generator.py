@@ -60,12 +60,28 @@ def get_azure_openai_cache():
             for line in f:
                 if line.startswith('AZURE_OPENAI_ENDPOINT'):
                     azure_openai_endpoint = line.split('=')[1].strip()
+                    if not azure_openai_endpoint:
+                        print("Azure OpenAI endpoint not found. Please provide them in the environment variables or in the cache file.", file=sys.stderr)
+                        sys.exit(1)
                 elif line.startswith('AZURE_OPENAI_API_VERSION'):
                     azure_openai_api_version = line.split('=')[1].strip()
+                    if not azure_openai_api_version:
+                        print("Azure OpenAI API version not found. Please provide them in the environment variables or in the cache file.", file=sys.stderr)
+                        sys.exit(1)
+                elif line.startswith('OPENAI_MODEL_MAX_TOKENS'):
+                    try:
+                        openai_model_max_tokens = int(line.split('=')[1].strip())
+                        if openai_model_max_tokens <= 0:
+                            print(f"Warning: Invalid OPENAI_MODEL_MAX_TOKENS value in the cache file: {azure_openai_cache_location}. Using the default value of 8192.", file=sys.stderr)
+                            openai_model_max_tokens = 8192
+                    except ValueError:
+                        openai_model_max_tokens = 8192
+                        print(f"Warning: Invalid OPENAI_MODEL_MAX_TOKENS value in the cache file: {azure_openai_cache_location}. Using the default value of 8192.", file=sys.stderr)
                 elif line.startswith('OPENAI_MODEL'):
                     openai_model = line.split('=')[1].strip()
-                elif line.startswith('OPENAI_MODEL_MAX_TOKENS'):
-                    openai_model_max_tokens = line.split('=')[1].strip()
+                    if not openai_model:
+                        print("OpenAI model not found. Please provide them in the environment variables or in the cache file.", file=sys.stderr)
+                        sys.exit(1)
         return azure_openai_endpoint, azure_openai_api_version, openai_model, openai_model_max_tokens
     except FileNotFoundError:
         print("Azure OpenAI endpoint not found. Please provide them in the environment variables or in the cache file.", file=sys.stderr)
@@ -76,6 +92,7 @@ token_provider = get_bearer_token_provider(
     DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
 )
 
+# print(f"Using Azure OpenAI endpoint: {azure_openai_endpoint}, api version: {api_version}", file=sys.stderr)
 client = AzureOpenAI(
     api_version=api_version,
     azure_endpoint=azure_openai_endpoint,
@@ -118,6 +135,7 @@ def chunk_diffs(diffs):
 
 def generate_text_with_azure_openai(prompt):
     try:
+        # print(f"Generating commit message using model {openai_model}...", file=sys.stderr)
         response = client.chat.completions.create(
             model=openai_model,
             messages=[
